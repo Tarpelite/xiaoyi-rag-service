@@ -1,0 +1,73 @@
+version: '3.8'
+
+services:
+  # Qdrant 向量数据库
+  qdrant:
+    image: aqtbrodh2awvkc.xuanyuan.run/qdrant/qdrant:v1.12.5
+    container_name: xiaoyi-qdrant
+    ports:
+      - "6333:6333"   # REST API
+      - "6334:6334"   # gRPC
+    volumes:
+      - ./data/qdrant:/qdrant/storage
+    restart: unless-stopped
+    healthcheck:
+      test: ["CMD", "curl", "-f", "http://localhost:6333/healthz"]
+      interval: 30s
+      timeout: 10s
+      retries: 3
+
+  # RAG 服务 API
+  api:
+    build:
+      context: .
+      dockerfile: Dockerfile
+    container_name: xiaoyi-rag-api
+    ports:
+      - "8000:8000"
+    volumes:
+      - ./data:/app/data
+      - ./src:/app/src
+      # 挂载模型缓存（避免重复下载）
+      - ~/.cache/huggingface:/root/.cache/huggingface
+    environment:
+      - QDRANT_HOST=qdrant
+      - QDRANT_PORT=6333
+      - EMBEDDING_DEVICE=cuda
+      - RERANKER_DEVICE=cuda
+    depends_on:
+      qdrant:
+        condition: service_healthy
+    deploy:
+      resources:
+        reservations:
+          devices:
+            - driver: nvidia
+              count: 1
+              capabilities: [gpu]
+    restart: unless-stopped
+
+  # 开发模式（不启用 GPU，用于测试）
+  api-dev:
+    build:
+      context: .
+      dockerfile: Dockerfile
+    container_name: xiaoyi-rag-api-dev
+    ports:
+      - "8001:8000"
+    volumes:
+      - ./data:/app/data
+      - ./src:/app/src
+    environment:
+      - QDRANT_HOST=qdrant
+      - QDRANT_PORT=6333
+      - EMBEDDING_DEVICE=cpu
+      - RERANKER_DEVICE=cpu
+      - DEBUG=true
+    depends_on:
+      - qdrant
+    profiles:
+      - dev
+
+volumes:
+  qdrant_data:
